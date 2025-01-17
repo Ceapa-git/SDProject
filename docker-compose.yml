@@ -1,0 +1,223 @@
+services:
+  traefik:
+    image: traefik:v3.2
+    container_name: traefik
+    command:
+      - --api.insecure=true
+      - --providers.docker
+      - --accesslog=true
+      - --log.level=DEBUG
+      - --accesslog.filepath=/var/log/traefik/access.log
+      - --entrypoints.web.address=:80
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - traefik_logs:/var/log/traefik
+    networks:
+      app-net:
+
+  db-user:
+    image: mysql
+    container_name: db-user
+    restart: no
+    environment:
+      MYSQL_DATABASE: userDatabase
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3307:3306"
+    volumes:
+      - user-management-db:/var/lib/mysql
+    networks:
+      app-net:
+  user-service:
+    build:
+      context: ./ds2024_30243_bugnariu_dan_assignment1_user_management
+      dockerfile: Dockerfile
+    environment:
+      - DB_IP=db-user
+      - DB_PORT=3306
+      - DB_USER=root
+      - DB_PASSWORD=root
+      - DB_DBNAME=userDatabase
+      - DEVICE_SERVICE_URL=http://traefik/device-service/device_management/sync
+      - CHAT_SERVICE_URL=http://traefik/chat-service/chat/sync
+    deploy:
+      replicas: 2
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.user-service.rule=Host(`user-service.localhost`) || PathPrefix(`/user-service`)"
+      - "traefik.http.middlewares.user-service-strip.stripprefix.prefixes=/user-service"
+      - "traefik.http.routers.user-service.middlewares=user-service-strip"
+      - "traefik.http.services.user-service.loadbalancer.server.port=8080"
+    networks:
+      app-net:
+    depends_on:
+      - db-user
+      - traefik
+      - device-service
+      - chat-service
+
+  db-device:
+    image: mysql
+    container_name: db-device
+    restart: no
+    environment:
+      MYSQL_DATABASE: deviceDatabase
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3308:3306"
+    volumes:
+      - device-management-db:/var/lib/mysql
+    networks:
+      app-net:
+  device-service:
+    build:
+      context: ./ds2024_30243_bugnariu_dan_assignment1_device_management
+      dockerfile: Dockerfile
+    environment:
+      - DB_IP=db-device
+      - DB_PORT=3306
+      - DB_USER=root
+      - DB_PASSWORD=root
+      - DB_DBNAME=deviceDatabase
+      - RABBIT_IP=rabbitmq
+      - RABBIT_PORT=5672
+      - RABBIT_USERNAME=admin
+      - RABBIT_PASSWORD=admin
+    deploy:
+      replicas: 2
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.device-service.rule=Host(`device-service.localhost`) || PathPrefix(`/device-service`)"
+      - "traefik.http.middlewares.device-service-strip.stripprefix.prefixes=/device-service"
+      - "traefik.http.routers.device-service.middlewares=device-service-strip"
+      - "traefik.http.services.device-service.loadbalancer.server.port=8080"
+    networks:
+      app-net:
+    depends_on:
+      - db-device
+      - rabbitmq
+      - traefik
+
+  db-monitoring:
+    image: mysql
+    container_name: db-monitoring
+    restart: no
+    environment:
+      MYSQL_DATABASE: monitoringDatabase
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3309:3306"
+    volumes:
+      - monitoring-db:/var/lib/mysql
+    networks:
+      app-net:
+  monitoring-service:
+    container_name: monitoring-service
+    build:
+      context: ./ds2024_30243_bugnariu_dan_assignment2_monitoring
+      dockerfile: Dockerfile
+    environment:
+      - DB_IP=db-monitoring
+      - DB_PORT=3306
+      - DB_USER=root
+      - DB_PASSWORD=root
+      - DB_DBNAME=monitoringDatabase
+      - RABBIT_IP=rabbitmq
+      - RABBIT_PORT=5672
+      - RABBIT_USERNAME=admin
+      - RABBIT_PASSWORD=admin
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.monitoring-service.rule=Host(`monitoring-service.localhost`) || PathPrefix(`/monitoring-service`)"
+      - "traefik.http.middlewares.monitoring-service-strip.stripprefix.prefixes=/monitoring-service"
+      - "traefik.http.routers.monitoring-service.middlewares=monitoring-service-strip"
+      - "traefik.http.services.monitoring-service.loadbalancer.server.port=8080"
+    networks:
+      app-net:
+    depends_on:
+      - db-monitoring
+      - rabbitmq
+  
+  db-chat:
+    image: mysql
+    container_name: db-chat
+    restart: no
+    environment:
+      MYSQL_DATABASE: chatDatabase
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3310:3306"
+    volumes:
+      - chat-db:/var/lib/mysql
+    networks:
+      app-net:
+  chat-service:
+    container_name: chat-service
+    build:
+      context: ./ds2024_30243_bugnariu_dan_assignment3_chat
+      dockerfile: Dockerfile
+    environment:
+      - DB_IP=db-chat
+      - DB_PORT=3306
+      - DB_USER=root
+      - DB_PASSWORD=root
+      - DB_DBNAME=chatDatabase
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.chat-service.rule=Host(`chat-service.localhost`) || PathPrefix(`/chat-service`)"
+      - "traefik.http.middlewares.chat-service-strip.stripprefix.prefixes=/chat-service"
+      - "traefik.http.routers.chat-service.middlewares=chat-service-strip"
+      - "traefik.http.services.chat-service.loadbalancer.server.port=8080"
+    networks:
+      app-net:
+    depends_on:
+      - db-chat
+      - traefik
+
+  frontend:
+    container_name: frontend
+    build:
+      context: ./ds2024_30243_bugnariu_dan_assignment1_frontend
+      dockerfile: Dockerfile
+      args:
+        REACT_APP_USER_SERVICE_API_URL: http://user-service.localhost/
+        REACT_APP_DEVICE_SERVICE_API_URL: http://device-service.localhost/
+        REACT_APP_MONITORING_SERVICE_API_URL: http://monitoring-service.localhost/
+        REACT_APP_CHAT_SERVICE_API_URL: http://chat-service.localhost/
+        REACT_APP_DEVICE_WEBSOCKET: http://monitoring-service.localhost/
+        REACT_APP_CHAT_WEBSOCKET: http://chat-service.localhost/
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=Host(`frontend.localhost`) || PathPrefix(`/frontend`)"
+      - "traefik.http.middlewares.frontend-strip.stripprefix.prefixes=/frontend"
+      - "traefik.http.routers.frontend.middlewares=frontend-strip"
+      - "traefik.http.services.frontend.loadbalancer.server.port=3000"
+    networks:
+      app-net:
+
+  rabbitmq:
+    image: rabbitmq:management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin
+    networks:
+      app-net:
+
+volumes:
+  user-management-db:
+  device-management-db:
+  monitoring-db:
+  chat-db:
+  traefik_logs:
+
+networks:
+  app-net:
+    name: app-net
+    driver: bridge
